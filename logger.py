@@ -264,7 +264,7 @@ def is_self_destruct(msg):
     if media is None:
         return False
     ttl = getattr(media, "ttl_seconds", None)
-    if ttl is not None and ttl > 0:
+    if ttl is not None and isinstance(ttl, (int, float)) and ttl > 0:
         return True
     return False
 
@@ -479,6 +479,37 @@ async def send_log_from_msg(header, msg, extra_text=None):
     await bot.send_message(LOG_CHANNEL, text, parse_mode="md", link_preview=False)
 
 
+async def get_reply_context_text(msg):
+    """如果消息包含回复，提取被回复人的姓名及内容摘要，格式化为引用文本。"""
+    if not getattr(msg, "is_reply", False):
+        return ""
+    try:
+        reply_msg = await msg.get_reply_message()
+        if not reply_msg:
+            return ""
+        r_sender = await get_sender_name(reply_msg)
+        r_text = reply_msg.raw_text.strip() if reply_msg.raw_text else ""
+        r_mtype = media_type(reply_msg)
+
+        if not r_text and r_mtype and r_mtype != "text":
+            mname = MEDIA_TYPE_NAMES.get(r_mtype, r_mtype)
+            r_text = f"[{mname}]"
+        elif r_text and r_mtype and r_mtype != "text":
+            mname = MEDIA_TYPE_NAMES.get(r_mtype, r_mtype)
+            r_text = f"[{mname}] {r_text}"
+
+        if len(r_text) > 120:
+            r_text = r_text[:120] + "..."
+
+        if r_text:
+            quoted = "\n> ".join(r_text.splitlines())
+            return f"💬 回复 {r_sender}：\n> {quoted}\n\n"
+        return f"💬 回复 {r_sender}\n\n"
+    except Exception as e:
+        log.warning("获取被回复消息失败: %s", e)
+        return ""
+
+
 async def check_and_forward(msg, sender, chat_name, media_path):
     """检查消息是否匹配特定群聊和指定人员的转发规则，若匹配则由机器人立即转发。"""
     if not FORWARD_RULES:
@@ -522,12 +553,16 @@ async def check_and_forward(msg, sender, chat_name, media_path):
                 clean_id = cid_str
             msg_link = f"https://t.me/c/{clean_id}/{msg.id}"
 
+        # 获取被回复消息摘要（若存在）
+        reply_part = await get_reply_context_text(msg)
+
         # 组装指定格式
         content_text = msg.raw_text.strip() if msg.raw_text else ""
         text_body = f"{content_text}\n\n" if content_text else ""
         card_text = (
             f"⏩ 转发消息\n\n"
             f"{sender}\n"
+            f"{reply_part}"
             f"{text_body}"
             f"{time_str}\n"
             f"原始连接：{msg_link}"
@@ -538,8 +573,13 @@ async def check_and_forward(msg, sender, chat_name, media_path):
                 await bot.send_file(target_chat, media_path, caption=card_text, parse_mode="md")
                 continue
             except Exception as e:
-                log.warning("转发媒体失败: %s", e)
-                card_text += "\n_(媒体无法转发)_"
+                log.warning("以 Markdown 发送媒体失败，尝试无格式发送: %s", e)
+                try:
+                    await bot.send_file(target_chat, media_path, caption=card_text, parse_mode=None)
+                    continue
+                except Exception as e2:
+                    log.warning("转发媒体失败: %s", e2)
+                    card_text += "\n_(媒体无法转发)_"
 
         if msg.media and not media_path:
             mtype = media_type(msg)
@@ -548,8 +588,12 @@ async def check_and_forward(msg, sender, chat_name, media_path):
                     await bot.send_file(target_chat, msg.media, caption=card_text, parse_mode="md")
                     continue
                 except Exception as e:
-                    log.warning("直推转发贴纸失败: %s", e)
-                    card_text += "\n_(贴纸无法转发)_"
+                    try:
+                        await bot.send_file(target_chat, msg.media, caption=card_text, parse_mode=None)
+                        continue
+                    except Exception as e2:
+                        log.warning("直推转发贴纸失败: %s", e2)
+                        card_text += "\n_(贴纸无法转发)_"
             elif mtype in ("photo", "video", "document"):
                 size_mb = get_media_size(msg) / (1024 * 1024)
                 mname = MEDIA_TYPE_NAMES.get(mtype, mtype)
@@ -558,7 +602,10 @@ async def check_and_forward(msg, sender, chat_name, media_path):
         try:
             await bot.send_message(target_chat, card_text, parse_mode="md", link_preview=False)
         except Exception as e:
-            log.warning("转发消息发送失败: %s", e)
+            try:
+                await bot.send_message(target_chat, card_text, parse_mode=None, link_preview=False)
+            except Exception as e2:
+                log.warning("转发消息发送失败: %s", e2)
 
 
 # ---------------------------------------------------------------------------
