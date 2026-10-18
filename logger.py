@@ -47,6 +47,7 @@ with open(_config_path, "r", encoding="utf-8") as f:
 API_ID = cfg["api_id"]
 API_HASH = cfg["api_hash"]
 PHONE = cfg["phone"]
+BOT_TOKEN = cfg["bot_token"]
 LOG_CHANNEL = cfg["log_channel_id"]
 
 ENABLED = cfg.get("enabled", True)
@@ -78,6 +79,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger("tg-logger")
 
 client = TelegramClient(os.path.join(DATA_DIR, "session"), API_ID, API_HASH)
+bot = TelegramClient(os.path.join(DATA_DIR, "bot_session"), API_ID, API_HASH)
 
 MEDIA_TYPE_NAMES = {
     "text": "文本",
@@ -360,7 +362,7 @@ async def send_log_from_db(header, row, extra_text=None):
 
     if media_path and os.path.exists(media_path):
         try:
-            await client.send_file(LOG_CHANNEL, media_path, caption=text, parse_mode="md")
+            await bot.send_file(LOG_CHANNEL, media_path, caption=text, parse_mode="md")
             return
         except Exception as e:
             log.warning("无法发送已缓存媒体: %s", e)
@@ -376,7 +378,7 @@ async def send_log_from_db(header, row, extra_text=None):
         elif size_mb > 0:
             text += f"\n_({mname} {size_mb:.1f}MB，未缓存)_"
 
-    await client.send_message(LOG_CHANNEL, text, parse_mode="md", link_preview=False)
+    await bot.send_message(LOG_CHANNEL, text, parse_mode="md", link_preview=False)
 
 
 async def send_log_from_msg(header, msg, extra_text=None):
@@ -388,7 +390,7 @@ async def send_log_from_msg(header, msg, extra_text=None):
     media = msg.media if msg else None
 
     if isinstance(media, str):
-        await client.send_file(LOG_CHANNEL, media, caption=text, parse_mode="md")
+        await bot.send_file(LOG_CHANNEL, media, caption=text, parse_mode="md")
         return
 
     if media and not isinstance(media, (MessageMediaWebPage, MessageMediaUnsupported)):
@@ -397,7 +399,7 @@ async def send_log_from_msg(header, msg, extra_text=None):
             size_mb = get_media_size(msg) / (1024 * 1024)
             mname = MEDIA_TYPE_NAMES.get(mtype, mtype)
             text += f"\n_({mname} {size_mb:.1f}MB，未保存)_"
-            await client.send_message(LOG_CHANNEL, text, parse_mode="md", link_preview=False)
+            await bot.send_message(LOG_CHANNEL, text, parse_mode="md", link_preview=False)
             return
 
         try:
@@ -405,7 +407,7 @@ async def send_log_from_msg(header, msg, extra_text=None):
             os.makedirs(dl_dir, exist_ok=True)
             path = await client.download_media(msg, file=dl_dir)
             if path:
-                await client.send_file(LOG_CHANNEL, path, caption=text, parse_mode="md")
+                await bot.send_file(LOG_CHANNEL, path, caption=text, parse_mode="md")
                 try:
                     os.remove(path)
                 except OSError:
@@ -415,7 +417,7 @@ async def send_log_from_msg(header, msg, extra_text=None):
             log.warning("无法转发媒体: %s", e)
             text += "\n_(媒体无法转发)_"
 
-    await client.send_message(LOG_CHANNEL, text, parse_mode="md", link_preview=False)
+    await bot.send_message(LOG_CHANNEL, text, parse_mode="md", link_preview=False)
 
 
 # ---------------------------------------------------------------------------
@@ -452,13 +454,13 @@ async def on_new_message(event):
             body += f"\n**消息文本:**\n{msg.raw_text}\n"
         if media_path and os.path.exists(media_path):
             try:
-                await client.send_file(LOG_CHANNEL, media_path, caption=header + body, parse_mode="md")
+                await bot.send_file(LOG_CHANNEL, media_path, caption=header + body, parse_mode="md")
             except Exception:
                 body += "\n_(媒体无法转发)_"
-                await client.send_message(LOG_CHANNEL, header + body, parse_mode="md", link_preview=False)
+                await bot.send_message(LOG_CHANNEL, header + body, parse_mode="md", link_preview=False)
         else:
             body += "\n_(媒体无法保存)_"
-            await client.send_message(LOG_CHANNEL, header + body, parse_mode="md", link_preview=False)
+            await bot.send_message(LOG_CHANNEL, header + body, parse_mode="md", link_preview=False)
 
     elif mtype in ("photo", "video", "document"):
         media_path = await cache_media(msg, mtype)
@@ -685,6 +687,10 @@ async def login_qr():
 # 主入口
 # ---------------------------------------------------------------------------
 async def main():
+    await bot.start(bot_token=BOT_TOKEN)
+    bot_me = await bot.get_me()
+    log.info("机器人已启动: @%s", bot_me.username)
+
     if LOGIN_METHOD == "qr":
         await login_qr()
     else:
@@ -694,10 +700,10 @@ async def main():
     log.info("已成功登录为 %s (id=%s)", me.first_name, me.id)
 
     try:
-        entity = await client.get_entity(LOG_CHANNEL)
-        log.info("日志频道: %s", getattr(entity, "title", entity))
+        entity = await bot.get_entity(LOG_CHANNEL)
+        log.info("日志目标: %s", getattr(entity, "title", entity))
     except Exception as e:
-        log.error("无法访问日志频道 %s: %s", LOG_CHANNEL, e)
+        log.error("机器人无法访问日志目标 %s (请确认已将机器人拉入群组/频道并赋予发消息权限): %s", LOG_CHANNEL, e)
         return
 
     cached = db.execute("SELECT COUNT(*) FROM messages").fetchone()[0]

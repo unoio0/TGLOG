@@ -2,6 +2,7 @@
   "api_id": 12345678,
   "api_hash": "在此处粘贴你的_api_hash",
   "phone": "+1234567890",
+  "bot_token": "123456789:在此处粘贴你的Bot_Token",
   "log_channel_id": -1001234567890,
   "login_method": "qr",
   "enabled": true,

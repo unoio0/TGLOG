@@ -13,7 +13,7 @@
 ## 功能特性
 
 - 实时监听已连接 Telegram 账号的收发消息（包括接收与发送）
-- 将已删除和已编辑的消息自动转发至指定的私有日志频道
+- 将已删除和已编辑的消息由 Telegram 机器人自动转发至指定的私有群组或频道
 - 在媒体被撤回或删除前提前下载照片、视频及文档（支持设置文件体积上限）
 - 阅后即焚（TTL）媒体送达时立即尝试保存
 - 使用 SQLite 进行持久化本地缓存，并在达到设定的容量限制时自动清理历史数据与对应媒体
@@ -35,7 +35,8 @@ cp config.example.json data/config.json
 
 - `api_id` 与 `api_hash`: Telegram 开发者凭据
 - `phone`: 您的账号手机号（用于手机号登录）
-- `log_channel_id`: 接收日志的私有频道数字 ID
+- `bot_token`: Telegram 机器人 Token（向 [@BotFather](https://t.me/BotFather) 申请）
+- `log_channel_id`: 接收日志的私有群组或频道数字 ID（**请务必将机器人拉入该群组/频道并赋予发消息与发媒体权限**）
 - `login_method`: 登录方式，可选 `qr`（二维码）或 `phone`（手机验证码）
 
 注意：`data/config.json`、Telegram 会话凭据、SQLite 缓存数据库以及下载的媒体文件均已在 Git 中忽略，不会被意外提交。
