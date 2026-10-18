@@ -1,0 +1,9 @@
+services:
+  logger:
+    build: .
+    container_name: tg-deleted-logger
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./data:/app/data

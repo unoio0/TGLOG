@@ -1,0 +1,18 @@
+# 运行时数据 — 切勿提交 Telegram 会话文件、已缓存的消息或媒体文件。
+data/
+config.json
+*.session
+*.session-*
+*.db
+*.db-*
+
+# 本地 Python 缓存与虚拟环境
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 本地环境配置与临时文件
+.env
+.env.*
+tmp/
