@@ -611,12 +611,21 @@ async def login_user():
         return
 
     log.info("正在启动账号登录认证，手机号: %s", PHONE)
+    log.info("正在向 Telegram 请求验证码，请查收手机/客户端通知...")
 
     def get_code():
-        return input("请输入 Telegram 发送给您的登录验证码: ")
+        print("\n" + "=" * 50, flush=True)
+        print(">>> 请在此输入 Telegram 发送给您的登录验证码: ", end="", flush=True)
+        code = input().strip()
+        print("=" * 50 + "\n", flush=True)
+        return code
 
     def get_password():
-        return input("请输入两步验证密码 (2FA): ")
+        print("\n" + "=" * 50, flush=True)
+        print(">>> 请在此输入两步验证密码 (2FA): ", end="", flush=True)
+        pwd = input().strip()
+        print("=" * 50 + "\n", flush=True)
+        return pwd
 
     await client.start(
         phone=PHONE,

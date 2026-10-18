@@ -43,19 +43,23 @@ cp config.example.json data/config.json
 
 ## 使用 Docker 运行
 
+### 1. 首次运行（交互登录认证）
+由于首次登录需要向终端输入验证码和 2FA 密码，请使用**直通终端模式**启动（避免 Docker 拦截键盘输入）：
+
 ```bash
-docker compose up --build
+docker compose run --rm -it logger
 ```
 
-首次运行进入交互认证流程（参考 TelegramForwarder 工业级登录体系）：
+按照屏幕提示操作：
 1. 终端提示输入收到的 5 位 Telegram 验证码；
 2. 若账号开启了 2FA（两步验证）且未在配置文件中预填 `password`，终端会提示输入 2FA 密码；
-3. 验证成功后，会话凭据持久保存在 `data/` 目录中，后续重启完全无需再次输入。
+3. 验证通过后，终端输出 `已成功登录为 ...` 即可按 `Ctrl + C` 退出。
 
-若需在后台运行：
+### 2. 正式在后台稳定运行
+会话已安全持久保存在 `data/` 目录中，直接启动后台守护进程：
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
 
 ## 本地直接运行（不使用 Docker）
