@@ -14,6 +14,7 @@ from telethon.tl.types import (
     Document,
     DocumentAttributeVideo,
     DocumentAttributeAnimated,
+    DocumentAttributeSticker,
     UpdateReadMessagesContents,
     User,
     Channel,
@@ -87,6 +88,7 @@ MEDIA_TYPE_NAMES = {
     "video": "视频",
     "document": "文档",
     "self_destruct": "阅后即焚",
+    "sticker": "贴纸/表情包",
     "link": "链接",
 }
 
@@ -250,12 +252,16 @@ def media_type(msg):
         return "text" if msg.raw_text else None
     if is_self_destruct(msg):
         return "self_destruct"
+    if getattr(msg, "sticker", None) is not None:
+        return "sticker"
     if isinstance(media, MessageMediaPhoto):
         return "photo"
     if isinstance(media, MessageMediaDocument):
         doc = media.document
         if isinstance(doc, Document):
             for attr in doc.attributes:
+                if isinstance(attr, DocumentAttributeSticker):
+                    return "sticker"
                 if isinstance(attr, DocumentAttributeVideo):
                     return "video"
                 if isinstance(attr, DocumentAttributeAnimated):
@@ -333,7 +339,7 @@ async def get_chat_name(msg):
 
 async def cache_media(msg, mtype):
     """若在大小限制内，下载并将媒体缓存到本地磁盘。返回存储路径或 None。"""
-    if mtype in ("text", "link", None):
+    if mtype in ("text", "link", "sticker", None):
         return None
     if not media_within_size_limit(msg, mtype):
         return None
@@ -375,6 +381,9 @@ async def send_log_from_db(header, row, extra_text=None):
             text += f"\n_({mname} {size_mb:.1f}MB，未保存)_"
         elif size_mb > 0:
             text += f"\n_({mname} {size_mb:.1f}MB，未缓存)_"
+
+    if mtype == "sticker":
+        text += "\n_(贴纸/表情包)_"
 
     await bot.send_message(LOG_CHANNEL, text, parse_mode="md", link_preview=False)
 
@@ -435,7 +444,7 @@ async def check_and_forward(msg, sender, chat_name, media_path):
         if isinstance(raw_senders, int):
             match_senders = {raw_senders}
         else:
-            match_senders = set(raw_senders)
+            match_senders = {int(x) for x in raw_senders if str(x).lstrip('-').isdigit()}
 
         if sender_id not in match_senders:
             continue
@@ -458,7 +467,14 @@ async def check_and_forward(msg, sender, chat_name, media_path):
 
         if msg.media and not media_path:
             mtype = media_type(msg)
-            if mtype in ("photo", "video", "document"):
+            if mtype == "sticker":
+                try:
+                    await bot.send_file(target_chat, msg.media, caption=header + body, parse_mode="md")
+                    continue
+                except Exception as e:
+                    log.warning("直推转发贴纸失败: %s", e)
+                    body += "\n_(贴纸无法转发)_"
+            elif mtype in ("photo", "video", "document"):
                 size_mb = get_media_size(msg) / (1024 * 1024)
                 mname = MEDIA_TYPE_NAMES.get(mtype, mtype)
                 body += f"\n_({mname} {size_mb:.1f}MB，未下载文件)_"
