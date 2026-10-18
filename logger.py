@@ -452,35 +452,59 @@ async def check_and_forward(msg, sender, chat_name, media_path):
         target_chat = rule.get("target_chat_id") or LOG_CHANNEL
         log.info("命中转发规则: 来源群聊 %s (%s) 用户 %s (%s) -> 目标 %s", chat_name, chat_id, sender, sender_id, target_chat)
 
-        header = f"⏩ **转发消息** 来自: {sender} (`{sender_id}`)\n在群聊: **{chat_name}**  `{chat_id}`\n"
-        body = ""
-        if msg.raw_text:
-            body += f"\n{msg.raw_text}\n"
+        # 格式化本地发送时间
+        time_str = msg.date.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+        # 构造原始消息跳转链接
+        chat = await msg.get_chat()
+        username = getattr(chat, "username", None)
+        if username:
+            msg_link = f"https://t.me/{username}/{msg.id}"
+        else:
+            cid_str = str(chat_id)
+            if cid_str.startswith("-100"):
+                clean_id = cid_str[4:]
+            elif cid_str.startswith("-"):
+                clean_id = cid_str[1:]
+            else:
+                clean_id = cid_str
+            msg_link = f"https://t.me/c/{clean_id}/{msg.id}"
+
+        # 组装指定格式
+        content_text = msg.raw_text.strip() if msg.raw_text else ""
+        text_body = f"{content_text}\n\n" if content_text else ""
+        card_text = (
+            f"⏩ 转发消息\n\n"
+            f"{sender}\n"
+            f"{text_body}"
+            f"{time_str}\n"
+            f"原始连接：{msg_link}"
+        )
 
         if media_path and os.path.exists(media_path):
             try:
-                await bot.send_file(target_chat, media_path, caption=header + body, parse_mode="md")
+                await bot.send_file(target_chat, media_path, caption=card_text, parse_mode="md")
                 continue
             except Exception as e:
                 log.warning("转发媒体失败: %s", e)
-                body += "\n_(媒体无法转发)_"
+                card_text += "\n_(媒体无法转发)_"
 
         if msg.media and not media_path:
             mtype = media_type(msg)
             if mtype == "sticker":
                 try:
-                    await bot.send_file(target_chat, msg.media, caption=header + body, parse_mode="md")
+                    await bot.send_file(target_chat, msg.media, caption=card_text, parse_mode="md")
                     continue
                 except Exception as e:
                     log.warning("直推转发贴纸失败: %s", e)
-                    body += "\n_(贴纸无法转发)_"
+                    card_text += "\n_(贴纸无法转发)_"
             elif mtype in ("photo", "video", "document"):
                 size_mb = get_media_size(msg) / (1024 * 1024)
                 mname = MEDIA_TYPE_NAMES.get(mtype, mtype)
-                body += f"\n_({mname} {size_mb:.1f}MB，未下载文件)_"
+                card_text += f"\n_({mname} {size_mb:.1f}MB，未下载文件)_"
 
         try:
-            await bot.send_message(target_chat, header + body, parse_mode="md", link_preview=False)
+            await bot.send_message(target_chat, card_text, parse_mode="md", link_preview=False)
         except Exception as e:
             log.warning("转发消息发送失败: %s", e)
 
