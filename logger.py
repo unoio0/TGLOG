@@ -48,6 +48,7 @@ LOG_CHANNEL = cfg["log_channel_id"]
 
 ENABLED = cfg.get("enabled", True)
 LISTEN_OUTGOING = cfg.get("listen_outgoing", False)
+IGNORE_BOTS = cfg.get("ignore_bots", True)
 LOG_DELETED = cfg.get("log_deleted", True)
 LOG_EDITED = cfg.get("log_edited", True)
 LOG_TEXT = cfg.get("log_text", True)
@@ -64,7 +65,29 @@ MAX_VIDEO_SIZE_MB = cfg.get("max_video_size_mb", 10)
 MAX_PHOTO_SIZE_MB = cfg.get("max_photo_size_mb", 10)
 
 MODE = cfg.get("mode", "all")
-WHITELIST = set(cfg.get("whitelist", []))
+WHITELIST_CHATS = set()
+WHITELIST_CHAT_SENDERS = {}
+
+for item in cfg.get("whitelist", []):
+    if isinstance(item, int) or (isinstance(item, str) and item.lstrip('-').isdigit()):
+        WHITELIST_CHATS.add(int(item))
+    elif isinstance(item, dict):
+        cid = item.get("chat_id")
+        if cid is not None:
+            try:
+                cid = int(cid)
+                WHITELIST_CHATS.add(cid)
+                raw_senders = item.get("sender_ids", [])
+                if isinstance(raw_senders, int):
+                    WHITELIST_CHAT_SENDERS[cid] = {raw_senders}
+                elif isinstance(raw_senders, (list, set)):
+                    senders_set = {int(x) for x in raw_senders if str(x).lstrip('-').isdigit()}
+                    if senders_set:
+                        WHITELIST_CHAT_SENDERS[cid] = senders_set
+            except (ValueError, TypeError):
+                pass
+
+WHITELIST = WHITELIST_CHATS
 BLACKLIST = set(cfg.get("blacklist", []))
 IGNORED_IDS = set(cfg.get("ignored_ids", []))
 IGNORED_IDS.add(LOG_CHANNEL)
@@ -309,8 +332,7 @@ def media_within_size_limit(msg, mtype):
     return True
 
 
-async def get_sender_name(msg):
-    sender = await msg.get_sender()
+def format_sender_name(sender):
     if not sender:
         return "未知"
     parts = []
@@ -321,6 +343,36 @@ async def get_sender_name(msg):
     if parts:
         return " ".join(parts)
     return getattr(sender, "title", None) or getattr(sender, "username", None) or "未知"
+
+
+async def get_sender_name(msg):
+    sender = await msg.get_sender()
+    return format_sender_name(sender)
+
+
+def is_sender_in_forward_rules(chat_id, sender_id):
+    """检查特定发件人是否在指定群聊的转发规则名单中。"""
+    if not FORWARD_RULES or not sender_id:
+        return False
+    for rule in FORWARD_RULES:
+        if rule.get("source_chat_id") == chat_id:
+            raw_senders = rule.get("sender_ids", [])
+            if isinstance(raw_senders, int):
+                match_senders = {raw_senders}
+            else:
+                match_senders = {int(x) for x in raw_senders if str(x).lstrip('-').isdigit()}
+            if sender_id in match_senders:
+                return True
+    return False
+
+
+def should_log_sender(chat_id, sender_id):
+    """检查特定群聊的消息是否满足发件人白名单限制。"""
+    if chat_id in WHITELIST_CHAT_SENDERS:
+        allowed = WHITELIST_CHAT_SENDERS[chat_id]
+        if sender_id not in allowed:
+            return False
+    return True
 
 
 async def get_chat_name(msg):
@@ -517,14 +569,24 @@ async def on_new_message(event):
     if not await should_log_chat(msg.chat_id):
         return
 
+    sender_entity = await msg.get_sender()
+    if IGNORE_BOTS and getattr(sender_entity, "bot", False):
+        if not is_sender_in_forward_rules(msg.chat_id, msg.sender_id):
+            return
+
+    can_log = should_log_sender(msg.chat_id, msg.sender_id)
+    is_forward = is_sender_in_forward_rules(msg.chat_id, msg.sender_id)
+    if not can_log and not is_forward:
+        return
+
     mtype = media_type(msg)
-    sender = await get_sender_name(msg)
+    sender = format_sender_name(sender_entity)
     chat_name = await get_chat_name(msg)
 
     # 缓存媒体至本地磁盘
     media_path = None
     media_size = get_media_size(msg)
-    if mtype == "self_destruct" and LOG_SELF_DESTRUCT:
+    if can_log and mtype == "self_destruct" and LOG_SELF_DESTRUCT:
         # 立即下载并发送至日志频道 — 无需等待删除事件触发
         try:
             media_path = await client.download_media(msg, file=MEDIA_DIR)
@@ -554,7 +616,8 @@ async def on_new_message(event):
     elif mtype in ("photo", "video", "document"):
         media_path = await cache_media(msg, mtype)
 
-    db_store(msg.chat_id, msg.id, sender, chat_name, msg.raw_text, mtype, media_path, media_size, msg.edit_date)
+    if can_log:
+        db_store(msg.chat_id, msg.id, sender, chat_name, msg.raw_text, mtype, media_path, media_size, msg.edit_date)
     await check_and_forward(msg, sender, chat_name, media_path)
 
 
@@ -564,6 +627,14 @@ async def on_edited(event):
     msg = event.message
     if not await should_log_chat(msg.chat_id):
         return
+
+    sender_entity = await msg.get_sender()
+    if IGNORE_BOTS and getattr(sender_entity, "bot", False):
+        return
+
+    if not should_log_sender(msg.chat_id, msg.sender_id):
+        return
+
     mtype = media_type(msg)
     if not should_log_media(mtype) and not msg.raw_text:
         return
@@ -572,7 +643,7 @@ async def on_edited(event):
     old = db_get(msg.chat_id, msg.id)
     if old is None:
         # 首次获取该消息，直接加入缓存
-        sender = await get_sender_name(msg)
+        sender = format_sender_name(sender_entity)
         chat_name = await get_chat_name(msg)
         media_path = None
         media_size = get_media_size(msg)
@@ -594,7 +665,7 @@ async def on_edited(event):
         db.commit()
         return
 
-    sender = await get_sender_name(msg)
+    sender = format_sender_name(sender_entity)
     chat_name = await get_chat_name(msg)
 
     header = f"\u270f\ufe0f **已编辑消息 来自:** {sender}\n在 **{chat_name}**  `{msg.chat_id}`\n"
@@ -632,7 +703,13 @@ async def on_deleted(event):
                 msgs = await client.get_messages(chat_id, ids=msg_id)
                 msg = msgs if not isinstance(msgs, list) else (msgs[0] if msgs else None)
                 if msg and msg.id:
-                    sender = await get_sender_name(msg)
+                    sender_entity = await msg.get_sender()
+                    if IGNORE_BOTS and getattr(sender_entity, "bot", False):
+                        continue
+                    if not should_log_sender(chat_id, msg.sender_id):
+                        continue
+
+                    sender = format_sender_name(sender_entity)
                     chat_name = await get_chat_name(msg)
                     mtype = media_type(msg)
 

@@ -7,6 +7,7 @@
   "log_channel_id": -1001234567890,
   "enabled": true,
   "listen_outgoing": false,
+  "ignore_bots": true,
   "log_deleted": true,
   "log_edited": true,
   "log_text": true,
@@ -21,7 +22,13 @@
   "max_video_size_mb": 10,
   "max_photo_size_mb": 10,
   "mode": "all",
-  "whitelist": [],
+  "whitelist": [
+    -1001234567890,
+    {
+      "chat_id": -1009876543210,
+      "sender_ids": [123456789, 987654321]
+    }
+  ],
   "blacklist": [],
   "cache_size": 50000,
   "forward_rules": [
