@@ -34,10 +34,10 @@ cp config.example.json data/config.json
 核心配置项说明：
 
 - `api_id` 与 `api_hash`: Telegram 开发者凭据
-- `phone`: 您的账号手机号（用于手机号登录）
+- `phone`: 您的账号手机号（如 `+8613800000000`）
+- `password`: 两步验证 (2FA) 密码（可选；若填写则启动时自动完成 2FA 校验，留空则在终端手动输入）
 - `bot_token`: Telegram 机器人 Token（向 [@BotFather](https://t.me/BotFather) 申请）
 - `log_channel_id`: 接收日志的私有群组或频道数字 ID（**请务必将机器人拉入该群组/频道并赋予发消息与发媒体权限**）
-- `login_method`: 登录方式，可选 `qr`（二维码）或 `phone`（手机验证码）
 
 注意：`data/config.json`、Telegram 会话凭据、SQLite 缓存数据库以及下载的媒体文件均已在 Git 中忽略，不会被意外提交。
 
@@ -47,7 +47,10 @@ cp config.example.json data/config.json
 docker compose up --build
 ```
 
-若使用二维码登录，在终端生成二维码后，打开 Telegram 手机端：**设置 → 设备 → 关联桌面设备** 进行扫码。会话将持久保存在 `data/` 目录中，后续启动无需再次登录。
+首次运行进入交互认证流程（参考 TelegramForwarder 工业级登录体系）：
+1. 终端提示输入收到的 5 位 Telegram 验证码；
+2. 若账号开启了 2FA（两步验证）且未在配置文件中预填 `password`，终端会提示输入 2FA 密码；
+3. 验证成功后，会话凭据持久保存在 `data/` 目录中，后续重启完全无需再次输入。
 
 若需在后台运行：
 

@@ -3,16 +3,10 @@ import os
 import asyncio
 import logging
 import sqlite3
-import base64
 from datetime import datetime
 
-import qrcode
-
 from telethon import TelegramClient, events
-from telethon.errors import SessionPasswordNeededError
-from telethon.tl.functions.auth import ExportLoginTokenRequest, AcceptLoginTokenRequest
 from telethon.tl.types import (
-    auth,
     MessageMediaPhoto,
     MessageMediaDocument,
     MessageMediaWebPage,
@@ -47,6 +41,7 @@ with open(_config_path, "r", encoding="utf-8") as f:
 API_ID = cfg["api_id"]
 API_HASH = cfg["api_hash"]
 PHONE = cfg["phone"]
+PASSWORD = cfg.get("password")
 BOT_TOKEN = cfg["bot_token"]
 LOG_CHANNEL = cfg["log_channel_id"]
 
@@ -73,7 +68,6 @@ BLACKLIST = set(cfg.get("blacklist", []))
 IGNORED_IDS = set(cfg.get("ignored_ids", []))
 IGNORED_IDS.add(LOG_CHANNEL)
 CACHE_SIZE = cfg.get("cache_size", 50000)
-LOGIN_METHOD = cfg.get("login_method", "phone")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("tg-logger")
@@ -611,76 +605,23 @@ async def on_read_contents(event):
 # ---------------------------------------------------------------------------
 # 登录流程
 # ---------------------------------------------------------------------------
-async def login_phone():
-    await client.start(
-        phone=PHONE,
-        password=lambda: input("请输入两步验证密码 (2FA): "),
-    )
-
-
-async def login_qr():
-    await client.connect()
+async def login_user():
     if await client.is_user_authorized():
         return
 
-    while True:
-        result = await client(ExportLoginTokenRequest(
-            api_id=API_ID,
-            api_hash=API_HASH,
-            except_ids=[],
-        ))
+    log.info("正在启动账号登录认证，手机号: %s", PHONE)
 
-        if isinstance(result, auth.LoginTokenSuccess):
-            break
+    def get_code():
+        return input("请输入 Telegram 发送给您的登录验证码: ")
 
-        if isinstance(result, auth.LoginTokenMigrateTo):
-            await client._switch_dc(result.dc_id)
-            result = await client(ExportLoginTokenRequest(
-                api_id=API_ID,
-                api_hash=API_HASH,
-                except_ids=[],
-            ))
-            if isinstance(result, auth.LoginTokenSuccess):
-                break
+    def get_password():
+        return input("请输入两步验证密码 (2FA): ")
 
-        token_b64 = base64.urlsafe_b64encode(result.token).decode("ascii")
-        url = f"tg://login?token={token_b64}"
-
-        qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_L)
-        qr.add_data(url)
-        qr.make(fit=True)
-
-        print("\n\033[2J\033[H")
-        print("请在 Telegram 中扫描此二维码：设置 > 设备 > 关联桌面设备\n")
-        qr.print_ascii(invert=True)
-        print()
-
-        try:
-            await asyncio.sleep(5)
-            try:
-                result = await client(ExportLoginTokenRequest(
-                    api_id=API_ID,
-                    api_hash=API_HASH,
-                    except_ids=[],
-                ))
-                if isinstance(result, auth.LoginTokenSuccess):
-                    break
-            except SessionPasswordNeededError:
-                break
-            except Exception:
-                pass
-        except asyncio.CancelledError:
-            raise
-
-    if not await client.is_user_authorized():
-        from telethon.tl.functions.account import GetPasswordRequest
-        from telethon.tl.functions.auth import CheckPasswordRequest
-        from telethon.password import compute_check
-        password = input("请输入两步验证密码 (2FA): ")
-        pwd = await client(GetPasswordRequest())
-        await client(CheckPasswordRequest(compute_check(pwd, password)))
-
-    print("二维码登录成功！")
+    await client.start(
+        phone=PHONE,
+        code_callback=get_code,
+        password=PASSWORD if PASSWORD else get_password,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -691,10 +632,7 @@ async def main():
     bot_me = await bot.get_me()
     log.info("机器人已启动: @%s", bot_me.username)
 
-    if LOGIN_METHOD == "qr":
-        await login_qr()
-    else:
-        await login_phone()
+    await login_user()
 
     me = await client.get_me()
     log.info("已成功登录为 %s (id=%s)", me.first_name, me.id)
