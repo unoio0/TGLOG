@@ -606,6 +606,7 @@ async def on_read_contents(event):
 # 登录流程
 # ---------------------------------------------------------------------------
 async def login_user():
+    await client.connect()
     if await client.is_user_authorized():
         return
 
