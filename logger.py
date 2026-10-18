@@ -68,6 +68,12 @@ BLACKLIST = set(cfg.get("blacklist", []))
 IGNORED_IDS = set(cfg.get("ignored_ids", []))
 IGNORED_IDS.add(LOG_CHANNEL)
 CACHE_SIZE = cfg.get("cache_size", 50000)
+FORWARD_RULES = cfg.get("forward_rules", [])
+FORWARD_SOURCE_IDS = {r.get("source_chat_id") for r in FORWARD_RULES if r.get("source_chat_id")}
+for rule in FORWARD_RULES:
+    target = rule.get("target_chat_id")
+    if target:
+        IGNORED_IDS.add(target)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("tg-logger")
@@ -208,6 +214,8 @@ async def should_log_chat(chat_id):
         return False
     if chat_id in IGNORED_IDS:
         return False
+    if chat_id in FORWARD_SOURCE_IDS:
+        return True
     if MODE == "whitelist" and chat_id not in WHITELIST:
         return False
     if MODE == "blacklist" and chat_id in BLACKLIST:
@@ -414,6 +422,57 @@ async def send_log_from_msg(header, msg, extra_text=None):
     await bot.send_message(LOG_CHANNEL, text, parse_mode="md", link_preview=False)
 
 
+async def check_and_forward(msg, sender, chat_name, media_path):
+    """检查消息是否匹配特定群聊和指定人员的转发规则，若匹配则由机器人立即转发。"""
+    if not FORWARD_RULES:
+        return
+
+    chat_id = msg.chat_id
+    sender_id = msg.sender_id
+
+    for rule in FORWARD_RULES:
+        source_id = rule.get("source_chat_id")
+        if source_id != chat_id:
+            continue
+
+        raw_senders = rule.get("sender_ids", [])
+        if isinstance(raw_senders, int):
+            match_senders = {raw_senders}
+        else:
+            match_senders = set(raw_senders)
+
+        if sender_id not in match_senders:
+            continue
+
+        target_chat = rule.get("target_chat_id") or LOG_CHANNEL
+        log.info("命中转发规则: 来源群聊 %s (%s) 用户 %s (%s) -> 目标 %s", chat_name, chat_id, sender, sender_id, target_chat)
+
+        header = f"⏩ **转发消息** 来自: {sender} (`{sender_id}`)\n在群聊: **{chat_name}**  `{chat_id}`\n"
+        body = ""
+        if msg.raw_text:
+            body += f"\n{msg.raw_text}\n"
+
+        if media_path and os.path.exists(media_path):
+            try:
+                await bot.send_file(target_chat, media_path, caption=header + body, parse_mode="md")
+                continue
+            except Exception as e:
+                log.warning("转发媒体失败: %s", e)
+                body += "\n_(媒体无法转发)_"
+
+        if msg.media and not media_path:
+            mtype = media_type(msg)
+            if mtype in ("photo", "video", "document"):
+                size_mb = get_media_size(msg) / (1024 * 1024)
+                mname = MEDIA_TYPE_NAMES.get(mtype, mtype)
+                body += f"\n_({mname} {size_mb:.1f}MB，未下载文件)_"
+
+        try:
+            await bot.send_message(target_chat, header + body, parse_mode="md", link_preview=False)
+        except Exception as e:
+            log.warning("转发消息发送失败: %s", e)
+
+
 # ---------------------------------------------------------------------------
 # 事件处理器
 # ---------------------------------------------------------------------------
@@ -460,6 +519,7 @@ async def on_new_message(event):
         media_path = await cache_media(msg, mtype)
 
     db_store(msg.chat_id, msg.id, sender, chat_name, msg.raw_text, mtype, media_path, media_size, msg.edit_date)
+    await check_and_forward(msg, sender, chat_name, media_path)
 
 
 async def on_edited(event):

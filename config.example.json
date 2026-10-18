@@ -23,6 +23,12 @@
   "mode": "all",
   "whitelist": [],
   "blacklist": [],
-  "ignored_ids": [],
-  "cache_size": 50000
+  "cache_size": 50000,
+  "forward_rules": [
+    {
+      "source_chat_id": -1001234567890,
+      "sender_ids": [123456789],
+      "target_chat_id": -1009876543210
+    }
+  ]
 }
