@@ -234,16 +234,12 @@ async def should_log_chat(chat_id):
 
 
 def is_self_destruct(msg):
-    """检查 Telegram 各版本 API 中所有已知的 TTL 字段。"""
-    if getattr(msg, "ttl_period", None):
-        return True
+    """仅将带有有效倒计时的单次查看照片/视频判定为阅后即焚（排除群组定时自动删除的ttl_period）。"""
     media = msg.media
     if media is None:
         return False
-    if getattr(media, "ttl_seconds", None):
-        return True
-    # 某些版本的 Telegram 将 ttl_period 设置在媒体本身上
-    if getattr(media, "ttl_period", None):
+    ttl = getattr(media, "ttl_seconds", None)
+    if ttl is not None and ttl > 0:
         return True
     return False
 
@@ -644,7 +640,7 @@ async def on_read_contents(event):
         return
     for msg_id in update.messages:
         row = db_get_by_msg_id(msg_id)
-        if row is None:
+        if row is None or row[5] != "self_destruct":
             continue
         chat_id = row[0]
         media_path = row[6]
