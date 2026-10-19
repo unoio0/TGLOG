@@ -5,6 +5,8 @@ services:
     restart: unless-stopped
     stdin_open: true
     tty: true
+    environment:
+      - TZ=Asia/Shanghai
     volumes:
       - ./data:/app/data
       - ./logger.py:/app/logger.py
