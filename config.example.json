@@ -37,5 +37,14 @@
       "sender_ids": [123456789],
       "target_chat_id": -1009876543210
     }
+  ],
+  "keyword_alerts": [
+    {
+      "enabled": true,
+      "channels": [-1001234567890, "example_channel"],
+      "keywords": ["补货", "优惠"],
+      "webhook_url": "https://trigger.macrodroid.com/YOUR_DEVICE_ID/YOUR_TRIGGER_NAME",
+      "cooldown_seconds": 10
+    }
   ]
 }

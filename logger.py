@@ -22,6 +22,11 @@ from telethon.tl.types import (
     Photo,
 )
 
+try:
+    from keyword_alerter import init_keyword_alerter
+except ImportError:
+    init_keyword_alerter = None
+
 # ---------------------------------------------------------------------------
 # 配置
 # ---------------------------------------------------------------------------
@@ -882,6 +887,10 @@ async def main():
     client.add_event_handler(on_edited, events.MessageEdited(incoming=True, outgoing=True))
     client.add_event_handler(on_deleted, events.MessageDeleted())
     client.add_event_handler(on_read_contents, events.Raw(UpdateReadMessagesContents))
+
+    # 初始化频道关键词监控与 MacroDroid 告警模块
+    if init_keyword_alerter:
+        init_keyword_alerter(client, cfg)
 
     log.info("模式: %s | 启用状态: %s | 正在监听...", MODE, ENABLED)
     await client.run_until_disconnected()

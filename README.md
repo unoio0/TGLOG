@@ -103,6 +103,22 @@ python logger.py
   - `source_chat_id`: 监听来源群聊 ID；
   - `sender_ids`: 需转发的发言人用户 ID 列表（支持一人或多人）；
   - `target_chat_id`: 转发目标群聊 ID（留空默认发送到 `log_channel_id`）。
+- `keyword_alerts`: 频道关键词监控与 MacroDroid 手机闹钟 Webhook 联动规则列表。当目标频道出现指定关键词的消息时，自动触发手机自动化动作。格式如下：
+  ```json
+  "keyword_alerts": [
+    {
+      "enabled": true,
+      "channels": [-1001234567890, "example_channel"],
+      "keywords": ["补货", "优惠"],
+      "webhook_url": "https://trigger.macrodroid.com/YOUR_DEVICE_ID/YOUR_TRIGGER_NAME",
+      "cooldown_seconds": 10
+    }
+  ]
+  ```
+  - `channels`: 监听的频道列表，支持填数字 ID 或公开用户名（如 `"example_channel"`）；
+  - `keywords`: 关键词列表（大小写不敏感，命中任意一个即告警）；
+  - `webhook_url`: MacroDroid Webhook 触发地址；
+  - `cooldown_seconds`: 防抖冷却时间（秒，防止短时间内重复触发手机闹钟）。
 - 默认配置会记录所有类型的消息。在正式账号上使用前，建议根据个人实际需要调整聊天类型开关和媒体体积限制。
 
 ## 技术栈
