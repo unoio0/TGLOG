@@ -3,6 +3,7 @@ import os
 import asyncio
 import logging
 import sqlite3
+import time
 from datetime import datetime
 
 from telethon import TelegramClient, events
@@ -55,6 +56,8 @@ ENABLED = cfg.get("enabled", True)
 LISTEN_OUTGOING = cfg.get("listen_outgoing", False)
 IGNORE_BOTS = cfg.get("ignore_bots", True)
 LOG_DELETED = cfg.get("log_deleted", True)
+IGNORE_AUTO_DELETED = cfg.get("ignore_auto_deleted", True)
+MAX_DELETED_AGE_HOURS = int(cfg.get("max_deleted_age_hours", 72))
 LOG_EDITED = cfg.get("log_edited", True)
 LOG_TEXT = cfg.get("log_text", True)
 LOG_PHOTOS = cfg.get("log_photos", True)
@@ -137,6 +140,8 @@ db.execute("""
         media_path TEXT,
         media_size INTEGER DEFAULT 0,
         edit_date TEXT,
+        msg_date INTEGER,
+        ttl_period INTEGER DEFAULT 0,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (chat_id, msg_id)
     )
@@ -147,10 +152,10 @@ db.execute("""
 db.commit()
 
 
-def db_store(chat_id, msg_id, sender_name, chat_name, text, mtype, media_path=None, media_size=0, edit_date=None):
+def db_store(chat_id, msg_id, sender_name, chat_name, text, mtype, media_path=None, media_size=0, edit_date=None, msg_date=None, ttl_period=0):
     db.execute(
-        "INSERT OR REPLACE INTO messages (chat_id, msg_id, sender_name, chat_name, text, media_type, media_path, media_size, edit_date) VALUES (?,?,?,?,?,?,?,?,?)",
-        (chat_id, msg_id, sender_name, chat_name, text, mtype, media_path, media_size, str(edit_date) if edit_date else None),
+        "INSERT OR REPLACE INTO messages (chat_id, msg_id, sender_name, chat_name, text, media_type, media_path, media_size, edit_date, msg_date, ttl_period) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (chat_id, msg_id, sender_name, chat_name, text, mtype, media_path, media_size, str(edit_date) if edit_date else None, msg_date, ttl_period or 0),
     )
     db.commit()
     # 清理超出限制的旧条目
@@ -177,7 +182,7 @@ def db_store(chat_id, msg_id, sender_name, chat_name, text, mtype, media_path=No
 
 def db_get(chat_id, msg_id):
     return db.execute(
-        "SELECT chat_id, msg_id, sender_name, chat_name, text, media_type, media_path, media_size, edit_date FROM messages WHERE chat_id=? AND msg_id=?",
+        "SELECT chat_id, msg_id, sender_name, chat_name, text, media_type, media_path, media_size, edit_date, msg_date, ttl_period FROM messages WHERE chat_id=? AND msg_id=?",
         (chat_id, msg_id),
     ).fetchone()
 
@@ -190,7 +195,7 @@ def db_get_by_msg_id(msg_id):
     避免将消息归属错误甚至泄露给错误的聊天。
     """
     rows = db.execute(
-        "SELECT chat_id, msg_id, sender_name, chat_name, text, media_type, media_path, media_size, edit_date FROM messages WHERE msg_id=?",
+        "SELECT chat_id, msg_id, sender_name, chat_name, text, media_type, media_path, media_size, edit_date, msg_date, ttl_period FROM messages WHERE msg_id=?",
         (msg_id,),
     ).fetchall()
     if len(rows) == 1:
@@ -669,7 +674,15 @@ async def on_new_message(event):
         media_path = await cache_media(msg, mtype)
 
     if can_log:
-        db_store(msg.chat_id, msg.id, sender, chat_name, msg.raw_text, mtype, media_path, media_size, msg.edit_date)
+        msg_date = int(msg.date.timestamp()) if getattr(msg, "date", None) else int(time.time())
+        ttl_period = getattr(msg, "ttl_period", None) or 0
+        if not ttl_period:
+            try:
+                chat = await msg.get_chat()
+                ttl_period = getattr(chat, "ttl_period", None) or 0
+            except Exception:
+                ttl_period = 0
+        db_store(msg.chat_id, msg.id, sender, chat_name, msg.raw_text, mtype, media_path, media_size, msg.edit_date, msg_date, ttl_period)
     await check_and_forward(msg, sender, chat_name, media_path)
 
 
@@ -701,7 +714,9 @@ async def on_edited(event):
         media_size = get_media_size(msg)
         if mtype in ("photo", "video", "document"):
             media_path = await cache_media(msg, mtype)
-        db_store(msg.chat_id, msg.id, sender, chat_name, msg.raw_text, mtype, media_path, media_size, msg.edit_date)
+        msg_date = int(msg.date.timestamp()) if getattr(msg, "date", None) else int(time.time())
+        ttl_period = getattr(msg, "ttl_period", None) or 0
+        db_store(msg.chat_id, msg.id, sender, chat_name, msg.raw_text, mtype, media_path, media_size, msg.edit_date, msg_date, ttl_period)
         return
 
     # 若编辑时间 edit_date 未变更（例如仅触发反应表情、置顶等），则跳过
@@ -734,7 +749,9 @@ async def on_edited(event):
     media_size = get_media_size(msg)
     if mtype in ("photo", "video", "document"):
         media_path = await cache_media(msg, mtype)
-    db_store(msg.chat_id, msg.id, sender, chat_name, msg.raw_text, mtype, media_path, media_size, msg.edit_date)
+    orig_msg_date = old[9] or (int(msg.date.timestamp()) if getattr(msg, "date", None) else int(time.time()))
+    orig_ttl = old[10] or 0
+    db_store(msg.chat_id, msg.id, sender, chat_name, msg.raw_text, mtype, media_path, media_size, msg.edit_date, orig_msg_date, orig_ttl)
 
 
 async def on_deleted(event):
@@ -761,6 +778,15 @@ async def on_deleted(event):
                     if not should_log_sender(chat_id, msg.sender_id):
                         continue
 
+                    # 检查是否属于自动到期清理或超期删除
+                    m_date = int(msg.date.timestamp()) if getattr(msg, "date", None) else int(time.time())
+                    m_ttl = getattr(msg, "ttl_period", None) or 0
+                    m_age = int(time.time()) - m_date
+                    if IGNORE_AUTO_DELETED and m_ttl and m_ttl > 0 and m_age >= (m_ttl - 120):
+                        continue
+                    if MAX_DELETED_AGE_HOURS > 0 and m_age > (MAX_DELETED_AGE_HOURS * 3600):
+                        continue
+
                     sender = format_sender_name(sender_entity)
                     chat_name = await get_chat_name(msg)
                     mtype = media_type(msg)
@@ -780,6 +806,24 @@ async def on_deleted(event):
                 log.warning("无法从聊天 %s 获取已删除消息 %s: %s", chat_id, msg_id, e)
 
         if row is None:
+            continue
+
+        # 检查是否属于自动到期清理或超期删除
+        now = int(time.time())
+        msg_date = row[9] or now
+        ttl_period = row[10] or 0
+        age = now - msg_date
+
+        # 1. 拦截到期自动清理（群开启了如3天删除，到期时静默移除，不发日志）
+        if IGNORE_AUTO_DELETED and ttl_period > 0 and age >= (ttl_period - 120):
+            log.info("忽略自动定时删除消息 %s/%s (存活 %d秒, TTL %d秒)", chat_id, msg_id, age, ttl_period)
+            db_remove(chat_id, msg_id)
+            continue
+
+        # 2. 拦截超期历史删除（超过设定上限，避免老消息批量清理刷屏）
+        if MAX_DELETED_AGE_HOURS > 0 and age > (MAX_DELETED_AGE_HOURS * 3600):
+            log.info("忽略超期历史删除消息 %s/%s (存活 %d秒, 上限 %d小时)", chat_id, msg_id, age, MAX_DELETED_AGE_HOURS)
+            db_remove(chat_id, msg_id)
             continue
         if not await should_log_chat(chat_id):
             continue
